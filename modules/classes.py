@@ -1,16 +1,46 @@
 import random
 import modules.actives as actives
 import modules.data as data
+import modules.lossfunctions as loss
+import modules.algorithms as algs
 
 class network: # abstact class for networks
     name=""
+    debugLevel=2 #the importsnce of the messages - 1 is the highest
     
-    synmax=1.0
-    synmin=-1.0
+    synmax=0.3
+    synmin=-0.3
     networks=[]
-    norm=0
+    norm=0 #table of normalized data
     innlayer=0
     outlayer=0
+    learning=False #shows if learning process executes right now
+
+    stats={"descr":"", \
+           "epochs":0, \
+           "maxmistake":0.0, \
+           "middlemistake":0.0, \
+           
+           }
+    params={"speed":1, \
+            "alpha":1, \
+            "additNeurons":1, \
+            "impulse":0.9, \
+            "lossFunction":"fabs", \
+            "allowPreserveNumericData":True \
+            
+            }
+    conditions={"epochs":2000, \
+                "maxmistake":0.1, \
+                "middlemistake":0.0,\
+                
+
+                }
+    normtableParams={"uno":{},\
+                     "boolean":{"role":False, "zero":1, "one":-1}, \
+                     "triple":{"role":False, "acrivtype":1}, \
+                     "diff":{"role":False}, \
+                     "numeric":{"role":False, "normtype":"linear", "alpha":1}}
     def __init__ (self, name="", activation="sigmoid"):
         self.networks.append(self)
         if (name==""):
@@ -20,9 +50,20 @@ class network: # abstact class for networks
         self.activation=activation
         self.layers=[]
         return
+    def errorMes (self, *messages):
+        res=""
+        for string in messages:
+            res+=str(string)+"\n"
+        print(res)
+    def debug(self, level=1, *messages):
+        if (level<=self.debugLevel):
+            res=""
+            for string in messages:
+                res+=str(string)+"\n"
+            print(res+"\n")
     def processData(self, path, params={"roles":[]}):
-        d=data.dataparser.excelXMLparser(params["roles"], path)
-        d.normtableGen()
+        d=data.dataparser.excelXMLparser(self, params["roles"], path)
+        d.normtableGen([], self.params["allowPreserveNumericData"])
         self.norm=d.generateNormalizedDataset()
         
     def addLayer(self, clName="layer"):
@@ -40,14 +81,18 @@ class network: # abstact class for networks
             i+=1
     def innlayerGen(self):
         if (self.norm==0):
-            print("Normalized data missing!")
+            self.errorMes("Normalized data missing!")
             return
         lay=enterLayer(self)
         for val in self.norm.columns:
             m=[]
-            for arr in val.cells[0]:
+            if (self.norm.normtable.table[self.norm.columns.index(val)][1]=="numeric"):
                 n=lay.addNeuron();
                 m.append(n)
+            else:
+                for arr in val.cells[0]:
+                    n=lay.addNeuron();
+                    m.append(n)
             lay.inn[self.norm.columns.index(val)]=m
         self.layers.append(lay)
         self.innlayer=lay
@@ -58,31 +103,120 @@ class network: # abstact class for networks
         lay=outLayer(self)
         for val in self.norm.answers:
             m=[]
-            for arr in val.cells[0]:
+            if (self.norm.normtable.table[self.norm.answers.index(val)][1]=="numeric"):
                 n=lay.addNeuron("outNeuron");
                 m.append(n)
+            else:
+                for arr in val.cells[0]:
+                    n=lay.addNeuron("outNeuron");
+                    m.append(n)
             lay.out[self.norm.answers.index(val)]=m
         self.layers.append(lay)
         self.outlayer=lay
     def setInput(self, index): #fills input layer neuron outputs with normalized data by it'r index
         if (self.norm==0):
-            print("Normalized data missing!")
-            return
-        if (len(self.norm.columns[0].cells)-1<index):
-            print ("Data index out of range!")
+            self.errorMes("Normalized data missing!")
             return
         for col in self.norm.columns:
-            for neu in self.innlayer.inn[self.norm.columns.index(col)]:
-                neuIndex=self.innlayer.inn[self.norm.columns.index(col)].index(neu)
-                neu.out=col.cells[index][neuIndex]
-    def compareOutput(self, ansIndex):#compares net output with answers in data
+            if (len(col.cells)-1<index and self.norm.normtable.table[self.norm.columns.index(col)][1]!="numeric"):
+                self.errorMes("Data index out of range!")
+                return
+            if (self.norm.normtable.table[self.norm.columns.index(col)][1]=="numeric"):
+                for neu in self.innlayer.inn[self.norm.columns.index(col)]:
+                    neuIndex=self.innlayer.inn[self.norm.columns.index(col)].index(neu)
+                    neu.out=actives.activ[self.normtableParams["numeric"]["normtype"]].activate(self.norm.normtable.table[self.norm.columns.index(col)][0][index], self.norm.alphaParams[self.norm.columns.index(col)]) 
+            else:
+                for neu in self.innlayer.inn[self.norm.columns.index(col)]:
+                    neuIndex=self.innlayer.inn[self.norm.columns.index(col)].index(neu)
+                    neu.out=col.cells[index][neuIndex]
+    def getAnswer(self):
+        i=1
+        while (i<len(self.layers)):
+            self.layers[i].getAnswerFromPrev()
+            i+=1
+    def giveInput(self, inn): #get array of not normalized data, normalizes it and aet to input layer
+        if (type(inn)!=list):
+            self.errorMes("Input is not array!")
+            return
+        if (len(inn)!=len(self.innlayer.inn)):
+            self.errorMes(str(len(self.innlayer.inn))+" arguments needed!")
+        res=[]
+        i=0
+        for arg in inn:
+            if (self.norm.normtable.normtype[i]=="numeric"):
+                try:
+                    num=float(inn[i])
+                    res.append([actives.activ[self.norm.normtable.params["numeric"]["normtype"]].activate(num, self.norm.alphaParams[i])])
+                except ValueError:
+                    self.errorMes("Argument "+inn[i]+" is not numeric data!")
+                    return
+            else:
+                try:
+                    res.append(self.norm.normtable.table[i][1][self.norm.normtable.table[i][0].index(inn[i])])
+                except ValueError:
+                    self.errorMes("Cannot fing argument "+inn[i]+" in normalization table!")
+                    return
+            i+=1
+        #adding values to neurons
+        i=0
+        for r in res:
+            j=0
+            for neu in self.innlayer.inn[i]:
+                self.innlayer.inn[i][j].out=res[i][j]
+                j+=1
+
+            i+=1
+    def compareOutput(self, ansIndex):#compares net output with answers in data !!!!!!доделать с нормализацией для цифр
         for ans in self.norm.answers:
             i=0
             for neu in self.outlayer.out[self.norm.answers.index(ans)]:
                 #neuIn=self.outlayer.out[self.norm.answers.index(ans)].index(neu)
-                self.outlayer.out[self.norm.answers.index(ans)][i].mistake=ans.cells[ansIndex][i]-self.outlayer.out[self.norm.answers.index(ans)][i]
+                self.outlayer.out[self.norm.answers.index(ans)][i].mistake=ans.cells[ansIndex][i]-self.outlayer.out[self.norm.answers.index(ans)][i].out
             i+=1
-        
+    def denormalize(self): #convert current output to array of denormalized data
+        res=[]
+        i=0
+        for ans in self.norm.answers:
+            m=[]
+            j=0
+            while (j<=len(self.outlayer.out[i])-1):
+                if (self.norm.ansNormtype[i]=="numeric"):
+                    m.append(self.outlayer.out[i][j].out)
+                else:
+                    m.append(round(self.outlayer.out[i][j].out))
+                j+=1                    
+            #denorm result now
+            r=0
+            z=0
+            for rol in self.norm.normtable.roles:
+                if (rol):
+                    if (i==r):
+                        if (self.norm.ansNormtype[i]=="numeric"):
+                            self.debug(3, "denorm, normtype", self.norm.alphaParams[r], self.norm.normtable.params["numeric"])
+                            res.append(actives.activ[self.norm.normtable.params["numeric"]["normtype"]].denorm(m[0], self.norm.ansAlpha[r]))
+                        else:
+                            self.debug(3, "from denormalize", self.norm.normtable.table[z][1], m)
+                            res.append(self.norm.normtable.table[z][0][self.norm.normtable.table[z][1].index(m)])
+                    r+=1
+                z+=1
+            i+=1
+        return res
+    def use(self, data): #gets array of not-normalized data and returns array of denormalized answer data
+        self.giveInput(data)
+        self.getAnswer()
+        return self.denormalize()
+    def conditionsCheck(self):
+        if (self.conditions["epochs"]<=self.stats["epochs"]):
+            return "Finished: epochs limit"
+        if (self.conditions["middlemistake"]>=self.stats["middlemistake"]):
+            return "Finished: middle error"
+        if (self.conditions["maxmistake"]>=self.stats["maxmistake"]):
+            return "Finished: max error"
+        return False
+    
+    def startLearning(self, algorithm):
+        self.learning=True
+        algs.algs[algorithm].start(self)
 
 class layer: # abstract for layers
     typ="layer"
@@ -90,6 +224,8 @@ class layer: # abstract for layers
         self.network=network
         self.activation=self.network.activation
         self.neurons=[]
+        if (self.typ!="outlayer" and self.network.params["additNeurons"]!=0):
+            self.addNeuron("additNeuron").out=self.network.params["additNeurons"]
     def addNeuron(self, clName="neuron"):
             n=classesNeurons[clName](self)
             self.neurons.append(n)
@@ -115,30 +251,48 @@ class outLayer(layer):#outlayer of network
     out={} #holds arrays of neurons, each for one data answer
     
 class neuron: # abstract class for neurons
+    typ="neuron"
     summ=0.0 # sum of all previous layer outputs
     out=0.0 # current neuron output
     q=0 # current computed misatke
     def __init__ (self, layer):
         self.layer=layer
         self.outneurons=[]
-        self.sinapses=[]
+        self.sinapses=[] #sinapses which connect neuron with previous layer
+        self.sinapsesOfOut=[] #sinapses which connect neuron with next layer
     def connectToNeu(self, neur): # connect to neuron from previous layer
-        sinaps(self, neur).weight=random.uniform(self.layer.network.synmax, self.layer.network.synmin)
+        if (self.layer.network.params["impulse"]==0):
+            sinaps(self, neur).weight=random.uniform(self.layer.network.synmax, self.layer.network.synmin)
+        else:
+            sinapsImpulse(self, neur).weight=random.uniform(self.layer.network.synmax, self.layer.network.synmin)
     def getsum (self): #getting weigh sum of all previous neurons outputs
+        self.summ=0
         for sin in self.sinapses:
             self.summ+=sin.weight*sin.prevneuron.out
+    def getactiv(self): #return activation function for current neuron
+        return self.layer.activation
     def getout (self):
         if hasattr(self, "activation"):
-            self.out=actives.activ[activation].activate(self.summ)
+            self.out=actives.activ[activation].activate(self.summ, self.layer.network.params["alpha"])
         else:
-            self.out=actives.activ[self.layer.activation].activate(self.summ)
+            self.out=actives.activ[self.layer.activation].activate(self.summ, self.layer.network.params["alpha"])
         
 class outNeuron (neuron):
-    compareRes=0;
+    mistake=0;
 
 class neuronOwnActivator (neuron):
     "Has personal activation function, instead of using layer parametr"
     activation="sigmoid"
+    def getactiv(self): #return activation function for current neuron
+        return self.activation
+class additNeuron (neuron):
+    typ="additNeuron"
+    def getsum(self):
+        return 0
+    def getout(self):
+        return self.layer.network.params["additNeurons"]
+    def connectToNeu(self, neur):
+        return
 
 class sinaps (): #container with information for sinapses
     weight=0.0
@@ -147,12 +301,14 @@ class sinaps (): #container with information for sinapses
         self.prevneuron=prevneuron
         owner.sinapses.append(self)
         prevneuron.outneurons.append(owner)
+        prevneuron.sinapsesOfOut.append(self)
         
-        
+class sinapsImpulse (sinaps):
+    prevCorr=0.0
         
 
 classesNeurons={"neuron":neuron,"neuronOwnActivator":neuronOwnActivator, \
-                "outNeuron":outNeuron}
+                "outNeuron":outNeuron, "additNeuron":additNeuron}
 classesLayers={"layer":layer, "enterLayer":enterLayer, "outLayer":outLayer}     
     
     
