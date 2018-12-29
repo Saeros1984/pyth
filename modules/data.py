@@ -163,7 +163,8 @@ class dataparser():
         except:
             network.errorMes("Data file reading mistake")
             return
-        cellanalyze=re.findall('<data.*?>(.*?)</data>', re.search('<row>(.*?)</row>', rawdata, re.DOTALL|re.I).group(0), re.DOTALL|re.I)#get first row of data for analyze
+        cellanalyze=re.findall('<data.*?>(.*?)</data>', re.search('<row.*?>(.*?)</row>', rawdata, re.DOTALL|re.I).group(0), re.DOTALL|re.I)#get first row of data for analyze
+        z=0
         for i in cellanalyze:
             dat.columns.append(datacolumn())
             dat.normtable.table.append([])
@@ -171,10 +172,11 @@ class dataparser():
             dat.roles.append(False)
             dat.alphaParams.append(1)
             for ro in roles:
-                if (cellanalyze.index(i)==ro):
-                    dat.roles[cellanalyze.index(i)]=True
+                if (z==ro):
+                    dat.roles[z]=True
+            z+=1
         dat.cellnumber=len(cellanalyze)
-        for row in re.findall('<row>(.*?)</row>', rawdata, re.DOTALL|re.I):
+        for row in re.findall('<row.*?>(.*?)</row>', rawdata, re.DOTALL|re.I):
             cells=re.findall('<data.*?>(.*?)</data>', row, re.DOTALL|re.I)
             i=0
             for cell in cells:

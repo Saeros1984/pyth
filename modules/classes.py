@@ -30,6 +30,7 @@ class network: # abstact class for networks
             "allowPreserveNumericData":True \
             
             }
+    CoshiParams={}
     conditions={"epochs":2000, \
                 "maxmistake":0.1, \
                 "middlemistake":0.0,\
