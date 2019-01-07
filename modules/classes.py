@@ -3,14 +3,23 @@ import modules.actives as actives
 import modules.data as data
 import modules.lossfunctions as loss
 import modules.algorithms as algs
+import modules.multiproc as pr
+
+class networkPool:
+    name=""
+    netpools=[]
+    def __init__(self, name=""):
+        self.nets=[]
+        if (name==""):
+            self.name="Pool "+str(len(self.netpools)+1)
+        else:
+            self.name=name
 
 class network: # abstact class for networks
     name=""
-    debugLevel=2 #the importsnce of the messages - 1 is the highest
-    
-    synmax=0.3
-    synmin=-0.3
-    networks=[]
+    debugLevel=2 #the importsnce of the messages - 1 is the highest   
+    synmax=1.3
+    synmin=-1.3
     norm=0 #table of normalized data
     innlayer=0
     outlayer=0
@@ -18,8 +27,8 @@ class network: # abstact class for networks
 
     stats={"descr":"", \
            "epochs":0, \
-           "maxmistake":0.0, \
-           "middlemistake":0.0, \
+           "maxmistake":1.0, \
+           "middlemistake":1.0, \
            
            }
     params={"speed":1, \
@@ -27,10 +36,20 @@ class network: # abstact class for networks
             "additNeurons":1, \
             "impulse":0.9, \
             "lossFunction":"fabs", \
-            "allowPreserveNumericData":True \
+            "allowPreserveNumericData":True, \
+            "regularization":"forfeit", \
             
             }
-    CoshiParams={}
+    CoshiParams={"T0":300, \
+                "T":0, \
+                 "Tcoeff":10, \
+                 "speed":1, \
+                 "randomReset":True, \
+                 
+                 }
+    regularization={"top":8, \
+                    "forfeit":0.1, \
+                    }
     conditions={"epochs":2000, \
                 "maxmistake":0.1, \
                 "middlemistake":0.0,\
@@ -38,18 +57,20 @@ class network: # abstact class for networks
 
                 }
     normtableParams={"uno":{},\
-                     "boolean":{"role":False, "zero":1, "one":-1}, \
+                     "boolean":{"role":False, "zero":1, "one":0}, \
                      "triple":{"role":False, "acrivtype":1}, \
                      "diff":{"role":False}, \
                      "numeric":{"role":False, "normtype":"linear", "alpha":1}}
-    def __init__ (self, name="", activation="sigmoid"):
-        self.networks.append(self)
+    def __init__ (self, networkPool, pool=False ,name="", activation="sigmoid"): #pool - gets procpool object
+        networkPool.nets.append(self)
+        self.networkPool=networkPool
         if (name==""):
-            self.name="network "+str(len(self.networks)+1)
+            self.name="network "+str(len(self.networkPool)+1)
         else:
             self.name=name
         self.activation=activation
         self.layers=[]
+        self.pool=pool
         return
     def errorMes (self, *messages):
         res=""
@@ -229,6 +250,7 @@ class layer: # abstract for layers
             self.addNeuron("additNeuron").out=self.network.params["additNeurons"]
     def addNeuron(self, clName="neuron"):
             n=classesNeurons[clName](self)
+            n.number=len(self.neurons)
             self.neurons.append(n)
             return n
     def addNeurons(self, num=5, clName="neuron"):
@@ -240,9 +262,27 @@ class layer: # abstract for layers
             for neu2 in layer.neurons:
                 neu.connectToNeu(neu2)
     def getAnswerFromPrev(self):
-        for neu in self.neurons:
-            neu.getsum()
-            neu.getout()
+        if (self.network.pool!=False):
+            recieves=0 #count of recieves
+            procId=0
+            for neu in self.neurons:
+                neu.number=self.neurons.index(neu)
+                self.network.pool.outputs[procId].send([neu, "getsum", "getout", False])
+                
+                if(procId>=len(self.network.pool.pool)-1):
+                    procId=0
+                    recieves+=self.network.pool.responseHandler(self.setNeuroOutput)
+                else:
+                    procId+=1
+            while (recieves<len(self.neurons)):
+                recieves+=self.network.pool.responseHandler(self.setNeuroOutput)
+        else:
+            for neu in self.neurons:
+                neu.getsum()
+                neu.getout()
+    def setNeuroOutput(self, output):#for multiprocessind only
+        self.neurons[output[1]].out=output[0]
+        
 class enterLayer(layer): #entering layer of network
     typ="enterLayer"
     inn={} #holds arrays of neurons, each for one data point
@@ -253,9 +293,30 @@ class outLayer(layer):#outlayer of network
     
 class neuron: # abstract class for neurons
     typ="neuron"
+    number=0
     summ=0.0 # sum of all previous layer outputs
     out=0.0 # current neuron output
     q=0 # current computed misatke
+    def __getstate__(self):
+        res={}
+        res["typ"]=self.typ
+        res["number"]=self.number
+        res["out"]=self.layer.network.params["additNeurons"]
+        res["summ"]=self.summ
+        res["q"]=self.q
+        res["alpha"]=self.layer.network.params["alpha"]
+        res["sinapses"]=[]
+        for sin in self.sinapses:
+            res["sinapses"].append({"weight":sin.weight, "out":sin.prevneuron.out})
+        res["getsum"]=self.getsumPick
+        res["getout"]=self.getoutPick
+        if hasattr(self, "activation"):
+            res["activation"]=self.activation
+        else:
+            res["activation"]=self.layer.activation
+        if hasattr(self, "mistake"):
+            res["mistake"]=self.mistake
+        return res
     def __init__ (self, layer):
         self.layer=layer
         self.outneurons=[]
@@ -270,14 +331,24 @@ class neuron: # abstract class for neurons
         self.summ=0
         for sin in self.sinapses:
             self.summ+=sin.weight*sin.prevneuron.out
+    def getsumPick (self): #for picked object only
+        self.summ=0
+        for sin in self.sinapses:
+            self.summ+=sin["weight"]*sin["out"]
     def getactiv(self): #return activation function for current neuron
         return self.layer.activation
     def getout (self):
         if hasattr(self, "activation"):
-            self.out=actives.activ[activation].activate(self.summ, self.layer.network.params["alpha"])
+            self.out=actives.activ[self.activation].activate(self.summ, self.layer.network.params["alpha"])
         else:
             self.out=actives.activ[self.layer.activation].activate(self.summ, self.layer.network.params["alpha"])
-        
+        return self.out
+    def getoutPick(self): #for picked object only
+        if (self.typ=="additNeuron"):
+            return self.out
+        else:
+            self.out=actives.activ[self.activation].activate(self.summ, self.alpha)
+        return self.out
 class outNeuron (neuron):
     mistake=0;
 

@@ -60,6 +60,7 @@ class data():
         i=0
         for ro in self.columns[0].cells:
             j=0
+            norm.mistakes.append(1)
             for col in self.columns:
                 if (self.normtable.table[j][1]=="numeric"):
                     j+=1
@@ -102,6 +103,7 @@ class normalizedData():
         self.normtype=[] #type of used normalization
         self.ansNormtype=[]
         self.ansAlpha=[]
+        self.mistakes=[] #mistakes for each data row
         self.normtable=0
     def visual(self):
         s="columns\n"
@@ -216,10 +218,16 @@ class normalize():
     def uno(distmass, value, params):
         return [0]
     def boolean(distmass, value, params):
-        if (distmass.index(value)==0):
-            return [params["zero"]]
-        if (distmass.index(value)==1):
-            return [params["one"]]
+        if (not params["role"]):
+            if (distmass.index(value)==0):
+                return [1]
+            if (distmass.index(value)==1):
+                return [-1]
+        else:
+            if (distmass.index(value)==0):
+                return [params["one"]]
+            if (distmass.index(value)==1):
+                return [params["zero"]]
     def triple(distmass, value, params):
         if (params["activtype"]==1):
             if (distmass.index(value)==0):
