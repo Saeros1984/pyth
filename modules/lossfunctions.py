@@ -1,49 +1,63 @@
 #here functions for error calculation
-#calculate middle error, calculate max error if mid=False
 
+import modules.actives as activ
 import math
-
-def fabs (network, dataid, mid=True): #sum of modules differences on each output neuron
-    err=0
-    if (mid):
+class fabs():
+    def do (network, dataid, of=""): #sum of modules differences on each output neuron
+        if(of==""):
+            of=network.norm
+        maxerr=0
+        err=0
         for n in network.outlayer.neurons:
-            err+=abs(n.mistake)
-            network.debug(5, abs(n.mistake))
+            n.calculatedMistake=abs(n.mistake)
+            err+=n.calculatedMistake
+            if (n.calculatedMistake>maxerr):
+                maxerr=n.calculatedMistake
+        err/=len(network.outlayer.neurons)
+        of.mistakes[dataid]=maxerr
+        return maxerr
+    def outDerivative(network):
+        for n in network.outlayer.neurons:
+            n.q=n.mistake*activ.activ[n.getactiv()].derivative(n)*network.params["speed"]
+        return n.q
+
+class meansquare():                
+    def do (network, dataid, of=""): #mid only!
+        if(of==""):
+            of=network.norm
+        err=0
+        maxerr=0
+        for n in network.outlayer.neurons:
+            n.calculatedMistake=n.mistake*n.mistake
+            err+=n.calculatedMistake
+            if (n.calculatedMistake>maxerr):
+                maxerr=n.calculatedMistake
         err=err/len(network.outlayer.neurons)
-        network.norm.mistakes[dataid]=err
-        network.debug(4, network.norm.mistakes[dataid], abs(n.mistake))
+        of.mistakes[dataid]=err
         return err
-    else:
+    def outDerivative(network):
         for n in network.outlayer.neurons:
-            if (abs(n.mistake)>err):
-                err=abs(n.mistake)
-        network.norm.mistakes[dataid]=err    
-        return err
+            n.q=n.mistake*activ.activ[n.getactiv()].derivative(n)*network.params["speed"]
+        return n.q
 
-def square (network, dataid, mid=True): #square sum
-    err=0
-    if (mid):
+class crossEntropy():                
+    def do (network, dataid):
+        err=0
+        maxerr=0
         for n in network.outlayer.neurons:
-            err+=abs(n.mistake)*abs(n.mistake)
-        network.norm.mistakes[dataid]=err
-        return err
-    else:
-        for n in network.outlayer.neurons:
-            sqr=abs(n.mistake)*abs(n.mistake)
-            if (sqr>err):
-                err=sqr
+            ut=1-n.out+0.000000000001
+            n.calculatedMistake=n.rightValue*math.log(n.out)+(1-n.rightValue)*math.log(ut)
+            err+=n.calculatedMistake
+            if (n.calculatedMistake>maxerr):
+                maxerr=n.calculatedMistake
+        err*=-(1/len(network.outlayer.neurons))
         network.norm.mistakes[dataid]=err
         return err
-                
-def meansquare (network, dataid, mid=True): #mid only!
-    if (not mid):
-        return square(network, dataid, mid)
-    err=0
-    for n in network.outlayer.neurons:
-            err+=math.fabs(n.mistake)*math.fabs(n.mistake)
-    err=err/len(network.outlayer.neurons)
-    network.norm.mistakes[dataid]=err
-    return err
+    def outDerivative(network):
+        for n in network.outlayer.neurons:
+            n.q=activ.activ[n.getactiv()].derivative(n)*(-1*(n.rightValue*(1/n.out)+(1-n.rightValue)*(1/(1-n.out))))
+        return n.q
 
 
-lossFunctions={"fabs":fabs, "square":square}
+
+lossFunctions={"fabs":fabs, "meansquare":meansquare, "crossEntropy":crossEntropy}
